@@ -53,7 +53,7 @@ IPCRM   = /usr/bin/ipcrm
 # Platform support, compatible with both BSD and GNU make
 #
 all:
-	@case `uname` in \
+	case `uname` in \
 		Darwin)	$(MAKE) ROOT="$(OSXROOT)" DESTDIR="$(OSXDEST)" $(BINARY); ;; \
 		Haiku)	$(MAKE) EXTRA_LIBS="-lnetwork" $(BINARY); ;; \
 		*)	if [ -f "/usr/include/tcpd.h" ]; then $(MAKE) withwrap; else $(MAKE) $(BINARY); fi; ;; \
@@ -91,6 +91,8 @@ functions.h:
 		grep -v "strlc" | \
 		grep -v "[a-z]:" | \
 		sed -e "s/ =.*$$//" -e "s/ *$$/;/" >> $@
+	sed -i '/shm_state/i #ifdef HAVE_SHMEM' functions.h
+	sed -i '/shm_state/a #endif' functions.h
 	@echo
 
 bin2c: bin2c.c

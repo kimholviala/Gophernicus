@@ -119,10 +119,12 @@ void die(state *st, char *message, char *description)
     if (description == NULL) description = strerror(en);
 
     /* Log the error */
+#ifdef HAVE_SYSLOG
     if (st->opt_syslog) {
         syslog(LOG_ERR, "error \"%s\" for request \"%s\" from %s",
             description, st->req_selector, st->req_remote_addr);
     }
+#endif
     log_combined(st, HTTP_404);
 
     /* Handle menu errors */
@@ -221,10 +223,12 @@ void selector_to_path(state *st)
                 st->rewrite[i].replace,
                 st->req_selector + strlen(st->rewrite[i].match));
 
+#ifdef HAVE_SYSLOG
             if (st->debug) {
                 syslog(LOG_INFO, "rewriting selector \"%s\" -> \"%s\"",
                     st->req_selector, buf);
             }
+#endif
 
             sstrlcpy(st->req_selector, buf);
         }
@@ -311,6 +315,7 @@ void selector_to_path(state *st)
  */
 char *get_local_address(void)
 {
+#ifndef _WIN32
 #ifdef HAVE_IPv4
     struct sockaddr_in addr;
     socklen_t addrsize = sizeof(addr);
@@ -341,6 +346,7 @@ char *get_local_address(void)
         }
     }
 #endif
+#endif
 
     /* Nothing works... I'm out of ideas */
     return UNKNOWN_ADDR;
@@ -352,6 +358,7 @@ char *get_local_address(void)
  */
 char *get_peer_address(void)
 {
+#ifndef _WIN32
 #ifdef HAVE_IPv4
     struct sockaddr_in addr;
     socklen_t addrsize = sizeof(addr);
@@ -385,6 +392,7 @@ char *get_peer_address(void)
             else return address;
         }
     }
+#endif
 #endif
 
     /* Nothing works... I'm out of ideas */
@@ -425,8 +433,10 @@ void init_state(state *st)
 
     if ((c = getenv("HOSTNAME")))
         sstrlcpy(st->server_host, c);
+#ifndef _WIN32
     else if ((gethostname(buf, sizeof(buf))) != ERROR)
         sstrlcpy(st->server_host, buf);
+#endif
 
     st->server_port = DEFAULT_PORT;
     st->server_tls_port = DEFAULT_TLS_PORT;
@@ -524,19 +534,29 @@ int main(int argc, char *argv[])
     setlocale(LC_TIME, DATE_LOCALE);
 #endif
     init_state(&st);
+#ifdef _WIN32
+    /* Windows dosen't have getppid() */
+    srand(time(NULL) / getpid());
+#else
     srand(time(NULL) / (getpid() + getppid()));
+#endif
 
     /* Handle command line arguments */
     parse_args(&st, argc, argv);
 
     /* Open syslog() */
+#ifdef HAVE_SYSLOG
     if (st.opt_syslog) openlog(self, LOG_PID, LOG_DAEMON);
+#endif
 
 #ifdef __OpenBSD__
     /* unveil(2) support.
      *
      * We only enable unveil(2) if the user isn't expecting to shell-out to
      * arbitrary commands.
+     */
+    /*
+     * We don't bother with HAVE_SYSLOG checks as OpenBSD has syslog.
      */
     if (st.opt_exec) {
         if (st.extra_unveil_paths != NULL) {
@@ -679,12 +699,16 @@ get_selector:
     /* Remove trailing CRLF */
     chomp(selector);
 
+#ifdef HAVE_SYSLOG
     if (st.debug) syslog(LOG_INFO, "client sent us \"%s\"", selector);
+#endif
 
     /* Handle HAproxy/Stunnel proxy protocol v1 */
 #ifdef ENABLE_HAPROXY1
     if (sstrncmp(selector, "PROXY TCP") == MATCH && st.opt_proxy) {
+#ifdef HAVE_SYSLOG
         if (st.debug) syslog(LOG_INFO, "got proxy protocol header \"%s\"", selector);
+#endif
 
         sscanf(selector, "PROXY TCP%d %s %s %d %d",
             &dummy, remote, local, &dummy, &st.server_port);
@@ -715,7 +739,9 @@ get_selector:
         printf("+VIEWS:" CRLF " application/gopher+-menu: <512b>" CRLF);
         printf("." CRLF);
 
+#ifdef HAVE_SYSLOG
         if (st.debug) syslog(LOG_INFO, "got a request for gopher+ root menu");
+#endif
         return OK;
     }
 
@@ -727,8 +753,9 @@ get_selector:
         if ((c = strchr(selector, ' '))) *c = '\0';
 
         st.req_protocol = PROTO_HTTP;
-
+#ifdef HAVE_SYSLOG
         if (st.debug) syslog(LOG_INFO, "got HTTP request for \"%s\"", selector);
+#endif
     }
 
     /* Save default server_host & fetch session data (including new server_host) */
@@ -798,7 +825,9 @@ get_selector:
 
     /* Convert seletor to path & stat() */
     selector_to_path(&st);
+#ifdef HAVE_SYSLOG
     if (st.debug) syslog(LOG_INFO, "path to resource is \"%s\"", st.req_realpath);
+#endif
 
     if (stat(st.req_realpath, &file) == ERROR) {
 
@@ -820,10 +849,13 @@ get_selector:
     st.req_filesize = file.st_size;
 
     /* Everyone must have read access but no write access */
+    /* Skip this check on Windows */
+#ifndef _WIN32
     if ((file.st_mode & S_IROTH) == 0)
         die(&st, ERR_ACCESS, "File or directory not world-readable");
     if ((file.st_mode & S_IWOTH) != 0)
         die(&st, ERR_ACCESS, "File or directory world-writeable");
+#endif
 
     /* If stat said it was a dir then it's a menu */
     if ((file.st_mode & S_IFMT) == S_IFDIR) st.req_filetype = TYPE_MENU;
@@ -856,6 +888,7 @@ get_selector:
 #endif
 
     /* Log the request */
+#ifdef HAVE_SYSLOG
     if (st.opt_syslog) {
         syslog(LOG_INFO, "request for \"gopher%s://%s:%i/%c%s\" from %s",
             (st.server_port == st.server_tls_port ? "s" : ""),
@@ -865,6 +898,7 @@ get_selector:
             st.req_selector,
             st.req_remote_addr);
     }
+#endif
 
     /* Check file type & act accordingly */
     switch (file.st_mode & S_IFMT) {
